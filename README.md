@@ -1,1 +1,172 @@
-# prueba
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>App de Grabación con Código de Barras</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 1em;
+      background: #f9f9f9;
+    }
+    video {
+      width: 100%;
+      max-width: 400px;
+      border: 2px solid #333;
+      border-radius: 10px;
+      margin-bottom: 1em;
+    }
+    button {
+      padding: 1em;
+      margin: 0.5em 0;
+      width: 100%;
+      font-size: 16px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    button#start { background-color: green; color: white; }
+    button#stop { background-color: red; color: white; }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.8em;
+      margin-top: 1em;
+    }
+    .video-item {
+      margin: 1em 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Grabadora con Detector de Códigos de Barras</h2>
+
+  <video id="preview" autoplay muted playsinline></video>
+
+  <button id="start">🎬 Iniciar grabación</button>
+  <button id="stop" disabled>🛑 Detener grabación</button>
+
+  <input type="text" id="search" placeholder="Buscar por código de barras...">
+  <div id="videos"></div>
+
+  <!-- Sonidos -->
+  <audio id="startSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+  <audio id="stopSound" src="https://actions.google.com/sounds/v1/cartoon/pop.ogg"></audio>
+
+  <!-- ZXing Barcode Scanner -->
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+  <script>
+    const videoElement = document.getElementById('preview');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const startSound = document.getElementById('startSound');
+    const stopSound = document.getElementById('stopSound');
+    const searchInput = document.getElementById('search');
+    const videosContainer = document.getElementById('videos');
+
+    let mediaRecorder;
+    let recordedChunks = [];
+    let stream;
+    let currentCode = null;
+    let scanInterval;
+
+    const dbKey = "videosDB";
+
+    async function initCamera() {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+      videoElement.srcObject = stream;
+    }
+
+    function startBarcodeScanner() {
+      const codeReader = new ZXing.BrowserMultiFormatReader();
+      scanInterval = setInterval(async () => {
+        try {
+          const result = await codeReader.decodeOnceFromVideoElement(videoElement);
+          if (result && result.text) {
+            currentCode = result.text;
+            console.log("Código detectado:", currentCode);
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function startRecording() {
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+      mediaRecorder.onstop = saveVideo;
+      mediaRecorder.start();
+    }
+
+    function stopRecording() {
+      mediaRecorder.stop();
+    }
+
+    function saveVideo() {
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const name = currentCode || `video-${Date.now()}`;
+      const data = {
+        name,
+        url,
+        createdAt: Date.now()
+      };
+      saveToStorage(data);
+      renderVideos();
+    }
+
+    function saveToStorage(videoData) {
+      const stored = JSON.parse(localStorage.getItem(dbKey) || "[]");
+      stored.push(videoData);
+      localStorage.setItem(dbKey, JSON.stringify(stored));
+    }
+
+    function getStoredVideos() {
+      let stored = JSON.parse(localStorage.getItem(dbKey) || "[]");
+      const now = Date.now();
+      stored = stored.filter(v => now - v.createdAt < 1000 * 60 * 60 * 24 * 30);
+      localStorage.setItem(dbKey, JSON.stringify(stored));
+      return stored;
+    }
+
+    function renderVideos(filter = "") {
+      const videos = getStoredVideos().filter(v => v.name.includes(filter));
+      videosContainer.innerHTML = "";
+      for (const video of videos) {
+        const div = document.createElement("div");
+        div.className = "video-item";
+        div.innerHTML = `
+          <strong>${video.name}</strong><br>
+          <video src="${video.url}" controls width="300"></video>
+        `;
+        videosContainer.appendChild(div);
+      }
+    }
+
+    startBtn.onclick = () => {
+      currentCode = null;
+      startRecording();
+      startBarcodeScanner();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      startSound.play();
+    };
+
+    stopBtn.onclick = () => {
+      stopRecording();
+      clearInterval(scanInterval);
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      stopSound.play();
+    };
+
+    searchInput.oninput = (e) => {
+      renderVideos(e.target.value.trim());
+    };
+
+    initCamera().then(renderVideos);
+  </script>
+</body>
+</html>
